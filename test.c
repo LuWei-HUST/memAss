@@ -3,6 +3,14 @@
 #include <string.h>
 #include "duckdb.h"
 
+#ifdef _WIN32
+#include <io.h> // Windows 下的 access 函数
+#define access _access
+#define F_OK 0
+#else
+#include <unistd.h> // 类 Unix 系统
+#endif
+
 #define SHOW_CODE 0
 #define APPEND_CODE 1
 #define QUIT_CODE -100
@@ -40,7 +48,7 @@ void selectFromDoc(duckdb_connection con) {
     duckdb_state state;
     duckdb_result result;
 
-    state = duckdb_query(con, "SELECT * FROM test", &result);
+    state = duckdb_query(con, "SELECT title, content FROM documents", &result);
     if (state == DuckDBError) {
         // handle error
         printf("select error\n");
@@ -121,16 +129,50 @@ int display() {
     }
 }
 
+void createTable(const char *path) {
+    duckdb_database db;
+    char *errMsg[1000];
+    duckdb_state state;
+    duckdb_connection con;
+
+    if (duckdb_open_ext(path, &db, NULL, errMsg) == DuckDBSuccess) {
+        printf("创建数据库成功\n");
+
+        if (duckdb_connect(db, &con) == DuckDBError) {
+            // handle error
+            printf("connect error");
+        }
+
+        state = duckdb_query(con, "CREATE TABLE documents (docId INT, title VARCHAR, content VARCHAR);", NULL);
+        if (state == DuckDBSuccess) {
+            printf("创建数据表成功\n");
+        } else {
+            printf("创建数据表失败\n");
+        }
+
+        duckdb_disconnect(&con);
+        duckdb_close(&db);
+    } else {
+        printf("create table error: %s\n", errMsg[0]);
+    }
+}
+
 int main() {
     int code;
     char title[100] = "title test";
     char text[1000] = "content test";
+    char *errMsg[100];
 
     duckdb_database db;
     duckdb_connection con;
 
     const char path[100] = "./storage/documents.duckdb";
     // char msg[1000];
+
+    if (access(path, F_OK) != 0) {
+        createTable(path);
+        exit(0);
+    }
 
     if (duckdb_open(path, &db) == DuckDBError) {
         // handle error
@@ -144,7 +186,7 @@ int main() {
     }
 
     duckdb_prepared_statement stmt;
-    if (duckdb_prepare(con, "insert into test values($1, $2)", &stmt) == DuckDBError) {
+    if (duckdb_prepare(con, "insert into documents values($1, $2, $3)", &stmt) == DuckDBError) {
         // handle error
         printf("prepare error");
         return 1;

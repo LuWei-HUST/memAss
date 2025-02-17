@@ -1,0 +1,5 @@
+*.o
+*.a
+storage/*
+test
+cindex

@@ -3,14 +3,35 @@
 #include <string.h>
 #include "duckdb.h"
 
-void display();
+#define SHOW_CODE 0
+#define APPEND_CODE 1
+#define QUIT_CODE -100
+#define ERROR_CODE -1
+
+int display();
 void selectFromDoc(duckdb_connection con);
-duckdb_state insertIntoDoc(duckdb_prepared_statement stmt, char *docId, char *text);
+duckdb_state insertIntoDoc(duckdb_prepared_statement stmt);
 
 
-duckdb_state insertIntoDoc(duckdb_prepared_statement stmt, char *docId, char *text) {
-    duckdb_bind_varchar(stmt, 1, docId); // the parameter index starts counting at 1!
-    duckdb_bind_varchar(stmt, 2, text);
+duckdb_state insertIntoDoc(duckdb_prepared_statement stmt) {
+    char title[100];
+    char content[10000];
+
+    fprintf(stdout, "title: ");
+    fgets(title, sizeof(title), stdin);
+    size_t len = strlen(title);
+    if (len > 0 && title[len - 1] == '\n') {
+        title[len - 1] = '\0';
+    }
+    fprintf(stdout, "content: ");
+    fgets(content, sizeof(content), stdin);
+    len = strlen(content);
+    if (len > 0 && content[len - 1] == '\n') {
+        content[len - 1] = '\0';
+    }
+
+    duckdb_bind_varchar(stmt, 1, title); // the parameter index starts counting at 1!
+    duckdb_bind_varchar(stmt, 2, content);
 
     return duckdb_execute_prepared(stmt, NULL);
 }
@@ -72,19 +93,43 @@ void selectFromDoc(duckdb_connection con) {
     duckdb_destroy_result(&result);
 }
 
-void display() {
-    
+int display() {
+    fprintf(stdout,
+    "******************************\n"
+    "  --show       输出表中内容\n"
+    "  --append     插入文本\n"
+    "  --quit       退出程序\n"
+    "******************************\n"
+    "--"
+    );
+
+    char input[100];
+    fgets(input, sizeof(input), stdin);
+    // printf("get %s\n", input);
+    size_t len = strlen(input);
+    if (len > 0 && input[len - 1] == '\n') {
+        input[len - 1] = '\0';
+    }
+    if (strcmp(input, "show") == 0) {
+        return SHOW_CODE;
+    } else if (strcmp(input, "append") == 0) {
+        return APPEND_CODE;
+    } else if (strcmp(input, "quit") == 0) {
+        return QUIT_CODE;
+    } else {
+        return ERROR_CODE;
+    }
 }
 
 int main() {
-    char input[100];
-    char title[100];
-    char text[1000];
+    int code;
+    char title[100] = "title test";
+    char text[1000] = "content test";
 
     duckdb_database db;
     duckdb_connection con;
 
-    const char path[100] = "/home/luwei/code/duckdb/build/release/documents.duckdb";
+    const char path[100] = "./storage/documents.duckdb";
     // char msg[1000];
 
     if (duckdb_open(path, &db) == DuckDBError) {
@@ -106,45 +151,24 @@ int main() {
     }
 
     while (true) {
-        printf("请选择：\n");
-        printf("1\\ insert\n");
-        printf("2\\ select\n");
-
-        fgets(input, sizeof(input), stdin);
-        size_t len = strlen(input);
-        if (len > 0 && input[len - 1] == '\n') {
-            input[len - 1] = '\0';
-        }
-        // printf("%s\n", input);
-        // break;
-        if (strcmp(input, "select") == 0) {
-            // printf("got select\n");
-            selectFromDoc(con);
-        }
-
-        if (strcmp(input, "insert") == 0) {
-            // printf("got insert\n");
-            printf("输入标题：");
-            fgets(title, sizeof(title), stdin);
-            len = strlen(title);
-            if (len > 0 && title[len - 1] == '\n') {
-                title[len - 1] = '\0';
-            }
-            // printf("got %s\n", title);
-            printf("输入内容：");
-            fgets(text, sizeof(text), stdin);
-            len = strlen(text);
-            if (len > 0 && text[len - 1] == '\n') {
-                text[len - 1] = '\0';
-            }
-            // printf("got %s\n", text);
-            insertIntoDoc(stmt, title, text);
-
-        }
-
-        if (strcmp(input, ".q") == 0) {
-            printf("Bye\n");
-            break;
+        code = display();
+        switch (code)
+        {
+            case QUIT_CODE:
+                printf("Bye\n");
+                exit(0);
+                break;
+            case ERROR_CODE:
+                printf("选项输入错误，请重新输入。\n");
+                break;
+            case SHOW_CODE:
+                selectFromDoc(con);
+                break;
+            case APPEND_CODE:
+                insertIntoDoc(stmt);
+                break;
+            default:
+                break;
         }
     }
 

@@ -16,14 +16,17 @@
 #define QUIT_CODE -100
 #define ERROR_CODE -1
 
+#define MSG_LENGTH 1024
+
 int display();
 void selectFromDoc(duckdb_connection con);
-duckdb_state insertIntoDoc(duckdb_prepared_statement stmt);
+void insertIntoDoc(duckdb_prepared_statement stmt);
 
 
-duckdb_state insertIntoDoc(duckdb_prepared_statement stmt) {
+void insertIntoDoc(duckdb_prepared_statement stmt) {
     char title[100];
     char content[10000];
+    duckdb_state state;
 
     fprintf(stdout, "title: ");
     fgets(title, sizeof(title), stdin);
@@ -38,10 +41,19 @@ duckdb_state insertIntoDoc(duckdb_prepared_statement stmt) {
         content[len - 1] = '\0';
     }
 
-    duckdb_bind_varchar(stmt, 1, title); // the parameter index starts counting at 1!
-    duckdb_bind_varchar(stmt, 2, content);
+    duckdb_bind_varchar(stmt, 2, title); // the parameter index starts counting at 1!
+    duckdb_bind_varchar(stmt, 3, content);
 
-    return duckdb_execute_prepared(stmt, NULL);
+    state = duckdb_execute_prepared(stmt, NULL);
+    if (state == DuckDBSuccess) {
+        printf("append success\n");
+    } else {
+        printf("code: %d\n", state);
+        const char *msg = duckdb_prepare_error(stmt);
+        if (msg == NULL) {
+            printf("got null");
+        }
+    }
 }
 
 void selectFromDoc(duckdb_connection con) {

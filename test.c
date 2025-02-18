@@ -41,18 +41,14 @@ void insertIntoDoc(duckdb_prepared_statement stmt) {
         content[len - 1] = '\0';
     }
 
-    duckdb_bind_varchar(stmt, 2, title); // the parameter index starts counting at 1!
-    duckdb_bind_varchar(stmt, 3, content);
+    duckdb_bind_varchar(stmt, 1, title); // the parameter index starts counting at 1!
+    duckdb_bind_varchar(stmt, 2, content);
 
     state = duckdb_execute_prepared(stmt, NULL);
     if (state == DuckDBSuccess) {
         printf("append success\n");
     } else {
-        printf("code: %d\n", state);
-        const char *msg = duckdb_prepare_error(stmt);
-        if (msg == NULL) {
-            printf("got null");
-        }
+        printf("append failed\n");
     }
 }
 
@@ -152,10 +148,10 @@ void createTable(const char *path) {
 
         if (duckdb_connect(db, &con) == DuckDBError) {
             // handle error
-            printf("connect error");
+            printf("connect error\n");
         }
 
-        state = duckdb_query(con, "CREATE TABLE documents (docId INT, title VARCHAR, content VARCHAR);", NULL);
+        state = duckdb_query(con, "CREATE SEQUENCE doc_id_seq START 1;CREATE TABLE documents (docId INT PRIMARY KEY DEFAULT nextval('doc_id_seq'), title VARCHAR, content VARCHAR);", NULL);
         if (state == DuckDBSuccess) {
             printf("创建数据表成功\n");
         } else {
@@ -183,24 +179,23 @@ int main() {
 
     if (access(path, F_OK) != 0) {
         createTable(path);
-        exit(0);
     }
 
     if (duckdb_open(path, &db) == DuckDBError) {
         // handle error
-        printf("open error");
+        printf("open error\n");
         return 1;
     }
     if (duckdb_connect(db, &con) == DuckDBError) {
         // handle error
-        printf("connect error");
+        printf("connect error\n");
         return 1;
     }
 
     duckdb_prepared_statement stmt;
-    if (duckdb_prepare(con, "insert into documents values($1, $2, $3)", &stmt) == DuckDBError) {
+    if (duckdb_prepare(con, "insert into documents (title, content) values($1, $2)", &stmt) == DuckDBError) {
         // handle error
-        printf("prepare error");
+        printf("prepare error\n");
         return 1;
     }
 

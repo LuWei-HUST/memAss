@@ -17,6 +17,7 @@
 #define ERROR_CODE -1
 
 #define MSG_LENGTH 1024
+#define MAX_LINES 2000
 
 int display();
 void selectFromDoc(duckdb_connection con);
@@ -165,6 +166,87 @@ void createTable(const char *path) {
     }
 }
 
+void loadStopWords(duckdb_connection con, const char *path) {
+    duckdb_result result;
+    // 查询停用词表
+    duckdb_state state = duckdb_query(con, "SELECT EXISTS ( SELECT 1 FROM information_schema.tables WHERE table_name = 'stopwords');", &result);
+    if (state == DuckDBError) {
+        // handle error
+        printf("select error\n");
+        const char *msg = duckdb_result_error(&result);
+        printf("%s\n", msg);
+    }
+    duckdb_data_chunk res = duckdb_fetch_chunk(result);
+    duckdb_vector col1 = duckdb_data_chunk_get_vector(res, 0);
+    char *col1_data = (char *) duckdb_vector_get_data(col1);
+    uint64_t *col1_validity = duckdb_vector_get_validity(col1);
+
+    if (col1_validity[0]) {
+        // printf("got %d\n", col1_data[0]);
+        if (col1_data[0] == 0) {    // 不存在则创建
+            state = duckdb_query(con, "CREATE TABLE stopwords(words VARCHAR);", NULL);
+            if (state == DuckDBSuccess) {
+                printf("停用词表创建成功\n");
+                // 从文件中读取
+                printf("加载停用词\n");
+                FILE *fin;
+                fin = fopen(path, "r");
+
+                if(fin == NULL) {
+                    printf("停用词文件打开失败\n");
+                    return ;
+                }
+
+                char buffer[256];
+                char *lines[MAX_LINES];
+                int line_count = 0;
+
+                while (fgets(buffer, sizeof(buffer), fin) != NULL) {
+                    // 去掉行末的换行符（如果有）
+                    buffer[strcspn(buffer, "\n")] = '\0';
+
+                    // 为当前行分配内存
+                    lines[line_count] = malloc(strlen(buffer) + 1);  // +1 用于存储 '\0'
+                    if (lines[line_count] == NULL) {
+                        perror("内存分配失败");
+                        fclose(fin);
+                        return ;
+                    }
+
+                    // 将缓冲区的内容复制到字符串数组中
+                    strcpy(lines[line_count], buffer);
+
+                    // 增加行数
+                    line_count++;
+
+                    // 如果行数超过数组容量，退出
+                    if (line_count >= MAX_LINES) {
+                        printf("已达到最大行数限制\n");
+                        break;
+                    }
+                }
+
+                fclose(fin);
+
+                duckdb_appender appender;
+                if (duckdb_appender_create(con, NULL, "stopwords", &appender) == DuckDBError) {
+                // handle error
+                }
+                for (int i=0;i<line_count;i++) {
+                    duckdb_append_varchar(appender, lines[i]);
+                    duckdb_appender_end_row(appender);
+                }
+
+                duckdb_appender_destroy(&appender);
+            } else {
+                printf("停用词表创建失败\n");
+            }
+        }
+    } else {
+        printf("查询停用词表是否存在时，返回值无效\n");
+    }
+}
+
 int main() {
     int code;
     char title[100] = "title test";
@@ -175,6 +257,7 @@ int main() {
     duckdb_connection con;
 
     const char path[100] = "./storage/documents.duckdb";
+    const char* STOP_WORDS_PATH = "./dict/stop_words.utf8";
     // char msg[1000];
 
     if (access(path, F_OK) != 0) {
@@ -191,6 +274,9 @@ int main() {
         printf("connect error\n");
         return 1;
     }
+
+    loadStopWords(con, STOP_WORDS_PATH);
+    // exit(0);
 
     duckdb_prepared_statement stmt;
     if (duckdb_prepare(con, "insert into documents (title, content) values($1, $2)", &stmt) == DuckDBError) {

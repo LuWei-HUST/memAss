@@ -462,7 +462,7 @@ void buildIndex(const char *path, duckdb_connection con, char *col) {
 
         filteredWords = tokenize(tempChar, lines, line_count, &filteredWordsLen);
 
-        inverted_index(invertedIndex, &invertedIndexLen, filteredWords, filteredWordsLen, i);
+        inverted_index(invertedIndex, &invertedIndexLen, filteredWords, filteredWordsLen, i+1);
     }
 
     for (int i=0;i<invertedIndexLen;i++) {

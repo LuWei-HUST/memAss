@@ -15,12 +15,14 @@
 #define SHOW_CODE 0
 #define APPEND_CODE 1
 #define INDEX_CODE 2
+#define SELECT_CODE 3
 #define QUIT_CODE -100
 #define ERROR_CODE -1
 
 #define MSG_LENGTH 1024
 #define MAX_LINES 2000
 #define MAX_WORD 1000
+#define MAX_QUERY 2048
 
 const char* DICT_PATH = "./dict/jieba.dict.utf8";
 const char* HMM_PATH = "./dict/hmm_model.utf8";
@@ -40,9 +42,15 @@ typedef struct indexCount {
     struct indexCount *next;
 } indexCount;
 
-int display();
 void selectFromDoc(duckdb_connection con);
 void insertIntoDoc(duckdb_prepared_statement stmt);
+void buildIndex(const char *path, duckdb_connection con, char *col);
+void selectByKey(duckdb_connection con, char *input);
+void createTable(const char *path);
+void loadStopWords(duckdb_connection con, const char *path);
+char **tokenize(char *text, char *lines[], int line_count, int *filteredWordsLen);
+void inverted_index(indexMap *invertedIndex, int *invertedIndexLen, char **filteredWords, int filteredWordsLen, int docId);
+void buildIndex(const char *path, duckdb_connection con, char *col);
 
 
 void insertIntoDoc(duckdb_prepared_statement stmt) {
@@ -84,6 +92,7 @@ void selectFromDoc(duckdb_connection con) {
         printf("select error\n");
         const char *msg = duckdb_result_error(&result);
         printf("%s\n", msg);
+        return ;
     }
 
     duckdb_data_chunk res = duckdb_fetch_chunk(result);
@@ -131,34 +140,157 @@ void selectFromDoc(duckdb_connection con) {
     duckdb_destroy_result(&result);
 }
 
-int display() {
-    fprintf(stdout,
-    "******************************\n"
-    "  --show       输出表中内容\n"
-    "  --append     插入文本\n"
-    "  --index      创建索引\n"
-    "  --quit       退出程序\n"
-    "******************************\n"
-    "--"
-    );
+void selectByKey(duckdb_connection con, char *input) {
+    char *querytext = malloc(MAX_WORD);
 
-    char input[100];
-    fgets(input, sizeof(input), stdin);
-    // printf("get %s\n", input);
-    size_t len = strlen(input);
-    if (len > 0 && input[len - 1] == '\n') {
-        input[len - 1] = '\0';
+    strcpy(querytext, input+7);
+
+    if (strlen(querytext) == 0) {
+        fprintf(stdout, "input nothing\n");
+        return ;
     }
-    if (strcmp(input, "show") == 0) {
-        return SHOW_CODE;
-    } else if (strcmp(input, "append") == 0) {
-        return APPEND_CODE;
-    } else if (strcmp(input, "index") == 0) {
-        return INDEX_CODE;
-    } else if (strcmp(input, "quit") == 0) {
-        return QUIT_CODE;
+
+    // fprintf(stdout, "select %s\n", keyword);
+    // 把停用词读进来
+    // printf("加载停用词\n");
+    FILE *fin;
+    fin = fopen(STOP_WORDS_PATH, "r");
+
+    if(fin == NULL) {
+        printf("停用词文件打开失败\n");
+        return ;
+    }
+
+    char buffer[256];
+    char *lines[MAX_LINES];
+    int line_count = 0;
+
+    while (fgets(buffer, sizeof(buffer), fin) != NULL) {
+        // 去掉行末的换行符（如果有）
+        buffer[strcspn(buffer, "\n")] = '\0';
+
+        // 为当前行分配内存
+        lines[line_count] = malloc(strlen(buffer) + 1);  // +1 用于存储 '\0'
+        if (lines[line_count] == NULL) {
+            perror("内存分配失败");
+            fclose(fin);
+            return ;
+        }
+
+        // 将缓冲区的内容复制到字符串数组中
+        strcpy(lines[line_count], buffer);
+
+        // 增加行数
+        line_count++;
+
+        // 如果行数超过数组容量，退出
+        if (line_count >= MAX_LINES) {
+            printf("已达到最大行数限制\n");
+            break;
+        }
+    }
+
+    fclose(fin);
+
+    char **queryWords;
+    int queryWordsLen = 0;
+    queryWords = tokenize(querytext, lines, line_count, &queryWordsLen);
+
+    fprintf(stdout, "分词后的查询文本：\n");
+    for (int i=0;i<queryWordsLen;i++) {
+        fprintf(stdout, "%s\n", queryWords[i]);
+    }
+    fprintf(stdout, "\n");
+
+    duckdb_state state;
+    duckdb_result result;
+
+    char *querysql = malloc(MAX_QUERY);
+    char *str2 = malloc(MAX_QUERY);
+
+    char str1[] = "select * from documents where docId in (select distinct(documents.docId) from document_content_fts_index, documents where words in ";
+    char str3[] = " and document_content_fts_index.docId=documents.docId);";
+
+    strcpy(str2, "[");
+    if (queryWordsLen) {
+        for (int i=0;i<queryWordsLen;i++) {
+            if (i == queryWordsLen - 1) {
+                strcat(str2, "'");
+                strcat(str2, queryWords[i]);
+                strcat(str2, "']");
+            } else {
+                strcat(str2, "'");
+                strcat(str2, queryWords[i]);
+                strcat(str2, "', ");
+            }
+        }
     } else {
-        return ERROR_CODE;
+        fprintf(stdout, "meaningless words to select\n");
+        return ;
+    }
+
+    strcpy(querysql, str1);
+    strcat(querysql, str2);
+    strcat(querysql, str3);
+
+    fprintf(stdout, "%s\n", querysql);
+
+    state = duckdb_query(con, querysql, &result);
+    if (state == DuckDBSuccess) {
+        duckdb_data_chunk res = duckdb_fetch_chunk(result);
+
+        // get the number of rows from the data chunk
+        idx_t row_count = duckdb_data_chunk_get_size(res);
+        printf("got %lu rows\n", row_count);
+
+        duckdb_vector col1 = duckdb_data_chunk_get_vector(res, 0);
+        int32_t *col1_data = (int32_t *) duckdb_vector_get_data(col1);
+        uint64_t *col1_validity = duckdb_vector_get_validity(col1);
+        duckdb_vector res_col_2 = duckdb_data_chunk_get_vector(res, 1);
+        duckdb_string_t *vector_data_2 = (duckdb_string_t *) duckdb_vector_get_data(res_col_2);
+        uint64_t *vector_validity_2 = duckdb_vector_get_validity(res_col_2);
+        duckdb_vector res_col_3 = duckdb_data_chunk_get_vector(res, 2);
+        duckdb_string_t *vector_data_3 = (duckdb_string_t *) duckdb_vector_get_data(res_col_3);
+        uint64_t *vector_validity_3 = duckdb_vector_get_validity(res_col_3);
+        for (idx_t row = 0; row < row_count; row++) {
+            if (duckdb_validity_row_is_valid(col1_validity, row)) {
+                printf("%d", col1_data[row]);
+            } else {
+                printf("NULL");
+            }
+            printf(", ");
+            if (duckdb_validity_row_is_valid(vector_validity_2, row)) {
+                duckdb_string_t str2 = vector_data_2[row];
+                if (duckdb_string_is_inlined(str2)) {
+                    // use inlined string
+                    printf("%.*s", str2.value.inlined.length, str2.value.inlined.inlined);
+                } else {
+                    // follow string pointer
+                    printf("%.*s", str2.value.pointer.length, str2.value.pointer.ptr);
+                }
+            } else {
+                printf("NULL");
+            }
+            printf(", ");
+            if (duckdb_validity_row_is_valid(vector_validity_3, row)) {
+                duckdb_string_t str3 = vector_data_3[row];
+                if (duckdb_string_is_inlined(str3)) {
+                    // use inlined string
+                    printf("%.*s", str3.value.inlined.length, str3.value.inlined.inlined);
+                } else {
+                    // follow string pointer
+                    printf("%.*s", str3.value.pointer.length, str3.value.pointer.ptr);
+                }
+            } else {
+                printf("NULL");
+            }
+            printf("\n");
+        }
+
+        // destroy the result after we are done with it
+        duckdb_destroy_result(&result);
+    } else {
+        fprintf(stderr, "通过倒排索引查询失败\n");
     }
 }
 
@@ -536,27 +668,38 @@ int main() {
     }
 
     while (true) {
-        code = display();
-        switch (code)
-        {
-            case QUIT_CODE:
-                printf("Bye\n");
-                exit(0);
-                break;
-            case ERROR_CODE:
-                printf("选项输入错误，请重新输入。\n");
-                break;
-            case SHOW_CODE:
-                selectFromDoc(con);
-                break;
-            case APPEND_CODE:
-                insertIntoDoc(stmt);
-                break;
-            case INDEX_CODE:
-                buildIndex(STOP_WORDS_PATH, con, "content");
-                break;
-            default:
-                break;
+
+        fprintf(stdout,
+        "**********************************\n"
+        "  --show              输出表中内容\n"
+        "  --append            插入文本\n"
+        "  --index             创建索引\n"
+        "  --select keyword    搜索查询\n"
+        "  --quit              退出程序\n"
+        "**********************************\n"
+        "--"
+        );
+    
+        char input[100];
+        fgets(input, sizeof(input), stdin);
+        // printf("get %s\n", input);
+        size_t len = strlen(input);
+        if (len > 0 && input[len - 1] == '\n') {
+            input[len - 1] = '\0';
+        }
+        if (strcmp(input, "show") == 0) {
+            selectFromDoc(con);
+        } else if (strcmp(input, "append") == 0) {
+            insertIntoDoc(stmt);
+        } else if (strcmp(input, "index") == 0) {
+            buildIndex(STOP_WORDS_PATH, con, "content");
+        } else if (strstr(input, "select ") != NULL) {
+            selectByKey(con, strstr(input, "select "));
+        } else if (strcmp(input, "quit") == 0) {
+            printf("Bye\n");
+            exit(0);
+        } else {
+            printf("选项输入错误，请重新输入。\n");
         }
     }
 

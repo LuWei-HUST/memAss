@@ -411,7 +411,7 @@ char **tokenize(Jieba handle, char *text, char *lines[], int line_count, int *fi
 
     int flag;
     char **filteredWords = malloc(MAX_WORD * sizeof(char *));
-    char buffer[256];
+    char buffer[MAX_WORD];
 
     int count = 0;
     for (x = words; x->word; x++) {
@@ -434,7 +434,7 @@ char **tokenize(Jieba handle, char *text, char *lines[], int line_count, int *fi
             //     filteredWords = filteredWordsNew;
             // }
 
-            filteredWords[count] = malloc(strlen(buffer) + 1);
+            filteredWords[count] = malloc(sizeof(buffer) + 1);
             if (filteredWords[count] == NULL) {
                 perror("内存分配失败");
                 return NULL;
@@ -448,6 +448,11 @@ char **tokenize(Jieba handle, char *text, char *lines[], int line_count, int *fi
     }
 
     *filteredWordsLen = count;
+    // printf("count:%d\n", count);
+
+    // for (int i=0;i<count;i++) {
+    //     fprintf(stdout, "%s\n", filteredWords[i]);
+    // }
 
     return filteredWords;
 }
@@ -459,6 +464,7 @@ void inverted_index(indexMap *invertedIndex, int *invertedIndexLen, char **filte
     int *tempIndex;
     
     for (int i=0;i<filteredWordsLen;i++) {
+        
         existsFlag = 0;
         for (int j=0;j<n;j++) {
             if(strcmp(invertedIndex[j].key, filteredWords[i])==0) {
@@ -476,8 +482,8 @@ void inverted_index(indexMap *invertedIndex, int *invertedIndexLen, char **filte
         }
 
         if (existsFlag == 0) {
-            invertedIndex[n].key = malloc(sizeof(filteredWords[i]));
-
+            // fprintf(stdout, "filteredWords[i]: %s\n", filteredWords[i]);
+            invertedIndex[n].key = malloc(strlen(filteredWords[i])+1);
             strcpy(invertedIndex[n].key, filteredWords[i]);
 
             invertedIndex[n].indexes = malloc(sizeof(int));
@@ -618,6 +624,7 @@ void buildIndex(Jieba handle, const char *path, duckdb_connection con, char *col
         // fprintf(stdout, "tempChar: %s\n", tempChar);
 
         filteredWords = tokenize(handle, tempChar, lines, line_count, &filteredWordsLen);
+        // printf("done\n");
 
         inverted_index(invertedIndex, &invertedIndexLen, filteredWords, filteredWordsLen, col1_data[i]);
     }
@@ -639,10 +646,12 @@ void buildIndex(Jieba handle, const char *path, duckdb_connection con, char *col
         duckdb_appender appender;
         if (duckdb_appender_create(con, NULL, "document_content_fts_index", &appender) == DuckDBError) {
         // handle error
+            printf("error\n");
         }
 
         for (int i=0;i<invertedIndexLen;i++) {
             for (int j=0;j<invertedIndex[i].indexLen;j++) {
+                // fprintf(stdout, "invertedIndex[i].key: %s\n", invertedIndex[i].key);
                 duckdb_append_varchar(appender, invertedIndex[i].key);
                 duckdb_append_int32(appender, invertedIndex[i].indexes[j]);
                 duckdb_appender_end_row(appender);

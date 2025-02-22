@@ -537,7 +537,7 @@ void buildIndex(Jieba handle, const char *path, duckdb_connection con, char *col
     duckdb_state state;
     duckdb_result result;
 
-    state = duckdb_query(con, "SELECT content FROM documents", &result);
+    state = duckdb_query(con, "SELECT docId, title, content FROM documents", &result);
     if (state == DuckDBError) {
         // handle error
         printf("select error\n");
@@ -551,9 +551,15 @@ void buildIndex(Jieba handle, const char *path, duckdb_connection con, char *col
     idx_t row_count = duckdb_data_chunk_get_size(res);
     // printf("got %lu rows\n", row_count);
 
-    duckdb_vector res_col_1 = duckdb_data_chunk_get_vector(res, 0);
+    duckdb_vector col1 = duckdb_data_chunk_get_vector(res, 0);
+    int32_t *col1_data = (int32_t *) duckdb_vector_get_data(col1);
+    uint64_t *col1_validity = duckdb_vector_get_validity(col1);
+    duckdb_vector res_col_1 = duckdb_data_chunk_get_vector(res, 1);
     duckdb_string_t *vector_data_1 = (duckdb_string_t *) duckdb_vector_get_data(res_col_1);
     uint64_t *vector_validity_1 = duckdb_vector_get_validity(res_col_1);
+    duckdb_vector res_col_2 = duckdb_data_chunk_get_vector(res, 2);
+    duckdb_string_t *vector_data_2 = (duckdb_string_t *) duckdb_vector_get_data(res_col_2);
+    uint64_t *vector_validity_2 = duckdb_vector_get_validity(res_col_2);
     // for (idx_t row = 0; row < row_count; row++) {
 	// 	if (duckdb_validity_row_is_valid(vector_validity_1, row)) {
 	// 		duckdb_string_t str = vector_data_1[row];
@@ -578,20 +584,42 @@ void buildIndex(Jieba handle, const char *path, duckdb_connection con, char *col
     char *tempChar = malloc(MAX_WORD);
 
     for (int i=0;i<row_count;i++) {
-        duckdb_string_t str = vector_data_1[i];
+        if (!duckdb_validity_row_is_valid(col1_validity, i) || !duckdb_validity_row_is_valid(vector_validity_1, i) || !duckdb_validity_row_is_valid(vector_validity_2, i)) {
+            fprintf(stderr, "data invalid\n");
+            continue;
+        }
+
+        duckdb_string_t str = vector_data_2[i];
+        duckdb_string_t str1 = vector_data_1[i];
         if (duckdb_string_is_inlined(str)) {
             // use inlined string
-            memcpy(tempChar, str.value.inlined.inlined, str.value.inlined.length);
-            tempChar[str.value.inlined.length] = '\0';
+            strncpy(tempChar, str.value.inlined.inlined, MAX_WORD);
+            strcat(tempChar, " ");
+            if (duckdb_string_is_inlined(str1)) {
+                // use inlined string
+                strncat(tempChar, str1.value.inlined.inlined, str1.value.inlined.length);
+            } else {
+                // follow string pointer
+                strncat(tempChar, str1.value.pointer.ptr, str1.value.pointer.length);
+            }
         } else {
             // follow string pointer
-            memcpy(tempChar, str.value.pointer.ptr, str.value.pointer.length);
+            strncpy(tempChar, str.value.pointer.ptr, str.value.pointer.length);
             tempChar[str.value.pointer.length] = '\0';
+            strcat(tempChar, " ");
+            if (duckdb_string_is_inlined(str1)) {
+                // use inlined string
+                strncat(tempChar, str1.value.inlined.inlined, str1.value.inlined.length);
+            } else {
+                // follow string pointer
+                strncat(tempChar, str1.value.pointer.ptr, str1.value.pointer.length);
+            }
         }
+        // fprintf(stdout, "tempChar: %s\n", tempChar);
 
         filteredWords = tokenize(handle, tempChar, lines, line_count, &filteredWordsLen);
 
-        inverted_index(invertedIndex, &invertedIndexLen, filteredWords, filteredWordsLen, i+1);
+        inverted_index(invertedIndex, &invertedIndexLen, filteredWords, filteredWordsLen, col1_data[i]);
     }
 
     // for (int i=0;i<invertedIndexLen;i++) {
@@ -626,13 +654,11 @@ void buildIndex(Jieba handle, const char *path, duckdb_connection con, char *col
         fprintf(stderr, "创建索引表失败\n");
     }
 
-    fprintf(stdout, "索引document_content_fts_index创建成功\n");
+    // fprintf(stdout, "索引document_content_fts_index创建成功\n");
 }
 
 int main() {
     int code;
-    char title[100] = "title test";
-    char text[1000] = "content test";
     char *errMsg[100];
 
     duckdb_database db;
@@ -666,19 +692,21 @@ int main() {
         printf("prepare error\n");
         return 1;
     }
-    fprintf(stdout,
-        "**********************************\n"
-        "  --show              输出表中内容\n"
-        "  --append            插入文本\n"
-        "  --index             创建索引\n"
-        "  --select keyword    搜索查询\n"
-        "  --quit              退出程序\n"
-        "**********************************\n"
-        "--"
-        );
     Jieba handle = NewJieba(DICT_PATH, HMM_PATH, USER_DICT, IDF_PATH, STOP_WORDS_PATH);
+    // 每次开启都刷新一遍索引
+    buildIndex(handle, STOP_WORDS_PATH, con, "content");
 
     while (true) {
+        fprintf(stdout,
+            "**********************************\n"
+            "  --show              输出表中内容\n"
+            "  --append            插入文本\n"
+            "  --index             创建索引\n"
+            "  --select keyword    搜索查询\n"
+            "  --quit              退出程序\n"
+            "**********************************\n"
+            "--"
+        );
     
         char input[100];
         fgets(input, sizeof(input), stdin);
@@ -701,17 +729,6 @@ int main() {
         } else {
             printf("选项输入错误，请重新输入。\n");
         }
-
-        fprintf(stdout,
-            "**********************************\n"
-            "  --show              输出表中内容\n"
-            "  --append            插入文本\n"
-            "  --index             创建索引\n"
-            "  --select keyword    搜索查询\n"
-            "  --quit              退出程序\n"
-            "**********************************\n"
-            "--"
-        );
     }
 
     duckdb_destroy_prepare(&stmt);

@@ -44,13 +44,12 @@ typedef struct indexCount {
 
 void selectFromDoc(duckdb_connection con);
 void insertIntoDoc(duckdb_prepared_statement stmt);
-void buildIndex(const char *path, duckdb_connection con, char *col);
-void selectByKey(duckdb_connection con, char *input);
+void buildIndex(Jieba handle, const char *path, duckdb_connection con, char *col);
+void selectByKey(Jieba handle, duckdb_connection con, char *input);
 void createTable(const char *path);
 void loadStopWords(duckdb_connection con, const char *path);
-char **tokenize(char *text, char *lines[], int line_count, int *filteredWordsLen);
+char **tokenize(Jieba handle, char *text, char *lines[], int line_count, int *filteredWordsLen);
 void inverted_index(indexMap *invertedIndex, int *invertedIndexLen, char **filteredWords, int filteredWordsLen, int docId);
-void buildIndex(const char *path, duckdb_connection con, char *col);
 
 
 void insertIntoDoc(duckdb_prepared_statement stmt) {
@@ -140,7 +139,7 @@ void selectFromDoc(duckdb_connection con) {
     duckdb_destroy_result(&result);
 }
 
-void selectByKey(duckdb_connection con, char *input) {
+void selectByKey(Jieba handle, duckdb_connection con, char *input) {
     char *querytext = malloc(MAX_WORD);
 
     strcpy(querytext, input+7);
@@ -194,7 +193,7 @@ void selectByKey(duckdb_connection con, char *input) {
 
     char **queryWords;
     int queryWordsLen = 0;
-    queryWords = tokenize(querytext, lines, line_count, &queryWordsLen);
+    queryWords = tokenize(handle, querytext, lines, line_count, &queryWordsLen);
 
     fprintf(stdout, "分词后的查询文本：\n");
     for (int i=0;i<queryWordsLen;i++) {
@@ -404,9 +403,7 @@ void loadStopWords(duckdb_connection con, const char *path) {
 }
 
 // 分词并过滤停用词
-char **tokenize(char *text, char *lines[], int line_count, int *filteredWordsLen) {
-
-    Jieba handle = NewJieba(DICT_PATH, HMM_PATH, USER_DICT, IDF_PATH, STOP_WORDS_PATH);
+char **tokenize(Jieba handle, char *text, char *lines[], int line_count, int *filteredWordsLen) {
     // printf("tokenize %s\n", text);
     size_t len = strlen(text);
     CJiebaWord* x;
@@ -494,7 +491,7 @@ void inverted_index(indexMap *invertedIndex, int *invertedIndexLen, char **filte
     *invertedIndexLen = n;
 }
 
-void buildIndex(const char *path, duckdb_connection con, char *col) {
+void buildIndex(Jieba handle, const char *path, duckdb_connection con, char *col) {
     // 把停用词读进来
     // printf("加载停用词\n");
     FILE *fin;
@@ -592,7 +589,7 @@ void buildIndex(const char *path, duckdb_connection con, char *col) {
             tempChar[str.value.pointer.length] = '\0';
         }
 
-        filteredWords = tokenize(tempChar, lines, line_count, &filteredWordsLen);
+        filteredWords = tokenize(handle, tempChar, lines, line_count, &filteredWordsLen);
 
         inverted_index(invertedIndex, &invertedIndexLen, filteredWords, filteredWordsLen, i+1);
     }
@@ -640,6 +637,7 @@ int main() {
     duckdb_connection con;
 
     const char path[100] = "./storage/documents.duckdb";
+    Jieba handle = NewJieba(DICT_PATH, HMM_PATH, USER_DICT, IDF_PATH, STOP_WORDS_PATH);
     // char msg[1000];
 
     if (access(path, F_OK) != 0) {
@@ -692,9 +690,9 @@ int main() {
         } else if (strcmp(input, "append") == 0) {
             insertIntoDoc(stmt);
         } else if (strcmp(input, "index") == 0) {
-            buildIndex(STOP_WORDS_PATH, con, "content");
+            buildIndex(handle, STOP_WORDS_PATH, con, "content");
         } else if (strstr(input, "select ") != NULL) {
-            selectByKey(con, strstr(input, "select "));
+            selectByKey(handle, con, strstr(input, "select "));
         } else if (strcmp(input, "quit") == 0) {
             printf("Bye\n");
             exit(0);

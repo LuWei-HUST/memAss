@@ -778,16 +778,15 @@ int main() {
             selectByKey(handle, con, strstr(input, "select "));
         } else if (strcmp(input, "quit") == 0) {
             printf("Bye\n");
+            duckdb_destroy_prepare(&stmt);
+            // cleanup
+            duckdb_disconnect(&con);
+            duckdb_close(&db);
             exit(0);
         } else {
             printf("选项输入错误，请重新输入。\n");
         }
     }
-
-    duckdb_destroy_prepare(&stmt);
-    // cleanup
-    duckdb_disconnect(&con);
-    duckdb_close(&db);
 
     return 0;
 }

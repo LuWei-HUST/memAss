@@ -50,22 +50,39 @@ void createTable(const char *path);
 void loadStopWords(duckdb_connection con, const char *path);
 char **tokenize(Jieba handle, char *text, char *lines[], int line_count, int *filteredWordsLen);
 void inverted_index(indexMap *invertedIndex, int *invertedIndexLen, char **filteredWords, int filteredWordsLen, int docId);
+void deleteItem(duckdb_connection con, char *title);
 
 
 void insertIntoDoc(duckdb_prepared_statement stmt) {
-    char title[100];
-    char content[10000];
+    char title[256];
+    char content[10240];
     duckdb_state state;
 
     fprintf(stdout, "title: ");
     fgets(title, sizeof(title), stdin);
     size_t len = strlen(title);
+    
+    if (len >= 255) {
+        fprintf(stderr, "标题太长啦，最多254个字符。\n");
+        char c;
+        while (c=getchar()!='\n' && c!=EOF) {};
+        return ;
+    }
+
     if (len > 0 && title[len - 1] == '\n') {
         title[len - 1] = '\0';
     }
     fprintf(stdout, "content: ");
     fgets(content, sizeof(content), stdin);
     len = strlen(content);
+
+    if (len >= 10000) {
+        fprintf(stderr, "内容太长啦，最多10000个字符。\n");
+        char c;
+        while (c=getchar()!='\n' && c!=EOF) {};
+        return ;
+    }
+
     if (len > 0 && content[len - 1] == '\n') {
         content[len - 1] = '\0';
     }
@@ -666,6 +683,24 @@ void buildIndex(Jieba handle, const char *path, duckdb_connection con, char *col
     // fprintf(stdout, "索引document_content_fts_index创建成功\n");
 }
 
+void deleteItem(duckdb_connection con, char *title) {
+    duckdb_state state;
+    char deleteStmt[] = "delete from documents where title='";
+    char *titleText = malloc(MAX_WORD);
+    strcpy(titleText, title+7);
+    strcat(deleteStmt, titleText);
+    strcat(deleteStmt, "'");
+    printf("%s\n", deleteStmt);
+
+    if (duckdb_query(con, deleteStmt, NULL) == DuckDBSuccess) {
+        fprintf(stdout, "delete %s success\n", titleText);
+    } else {
+        fprintf(stderr, "delete error");
+    }
+
+    free(titleText);
+}
+
 int main() {
     int code;
     char *errMsg[100];
@@ -710,6 +745,7 @@ int main() {
             "**********************************\n"
             "  --show              输出表中内容\n"
             "  --append            插入文本\n"
+            "  --delete title      删除文本\n"
             "  --index             创建索引\n"
             "  --select keyword    搜索查询\n"
             "  --quit              退出程序\n"
@@ -717,17 +753,25 @@ int main() {
             "--"
         );
     
-        char input[100];
+        char input[300];
         fgets(input, sizeof(input), stdin);
         // printf("get %s\n", input);
         size_t len = strlen(input);
         if (len > 0 && input[len - 1] == '\n') {
             input[len - 1] = '\0';
         }
+
+        if (len > 280) {
+            char c;
+            while (c=getchar()!='\n' && c!=EOF) {};
+        }
+
         if (strcmp(input, "show") == 0) {
             selectFromDoc(con);
         } else if (strcmp(input, "append") == 0) {
             insertIntoDoc(stmt);
+        } else if (strstr(input, "delete ") != NULL) {
+            deleteItem(con, strstr(input, "delete "));
         } else if (strcmp(input, "index") == 0) {
             buildIndex(handle, STOP_WORDS_PATH, con, "content");
         } else if (strstr(input, "select ") != NULL) {
